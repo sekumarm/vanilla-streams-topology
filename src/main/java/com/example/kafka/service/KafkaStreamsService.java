@@ -14,9 +14,6 @@ import org.apache.kafka.streams.kstream.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
-import java.util.ArrayList;
-
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -26,71 +23,62 @@ public class KafkaStreamsService {
 
     @Autowired
     public void buildPipeline(StreamsBuilder streamsBuilder) {
-        // Create KStream for topic1
+        // Create KStream for topic1 - Key is already studentId
         KStream<String, String> topic1Stream = streamsBuilder.stream("kafka-topic-1");
         
-        // Create KStream for topic2
+        // Create KStream for topic2 - Key is studentName
         KStream<String, String> topic2Stream = streamsBuilder.stream("kafka-topic-2");
         
-        // Extract studentId as key for topic1
-        KStream<String, String> topic1KeyedStream = topic1Stream.map((key, value) -> {
+        // Deserialize topic1 records
+        KStream<String, Topic1Record> topic1RecordStream = topic1Stream.mapValues(value -> {
             try {
-                Topic1Record record = objectMapper.readValue(value, Topic1Record.class);
-                return KeyValue.pair(String.valueOf(record.getStudentId()), value);
+                return objectMapper.readValue(value, Topic1Record.class);
             } catch (JsonProcessingException e) {
                 log.error("Error deserializing topic1 record: {}", e.getMessage());
-                return KeyValue.pair("error", value);
+                return null;
             }
-        });
+        }).filter((key, value) -> value != null);
         
-        // Extract studentId as key for topic2
-        KStream<String, String> topic2KeyedStream = topic2Stream.map((key, value) -> {
+        // Deserialize topic2 records
+        KStream<String, Topic2Record> topic2RecordStream = topic2Stream.mapValues(value -> {
             try {
-                Topic2Record record = objectMapper.readValue(value, Topic2Record.class);
-                return KeyValue.pair(String.valueOf(record.getStudentId()), value);
+                return objectMapper.readValue(value, Topic2Record.class);
             } catch (JsonProcessingException e) {
                 log.error("Error deserializing topic2 record: {}", e.getMessage());
-                return KeyValue.pair("error", value);
+                return null;
             }
-        });
+        }).filter((key, value) -> value != null);
+        
+        // Repartition topic2 to have studentId as key
+        KStream<String, Topic2Record> topic2RepartitionedStream = topic2RecordStream
+                .selectKey((key, value) -> String.valueOf(value.getStudentId()));
         
         // Group topic1 stream by studentId key
-        KGroupedStream<String, String> topic1GroupedStream = topic1KeyedStream.groupByKey();
+        KGroupedStream<String, Topic1Record> topic1GroupedStream = topic1RecordStream.groupByKey();
         
-        // Group topic2 stream by studentId key
-        KGroupedStream<String, String> topic2GroupedStream = topic2KeyedStream.groupByKey();
+        // Group repartitioned topic2 stream by studentId key
+        KGroupedStream<String, Topic2Record> topic2GroupedStream = topic2RepartitionedStream.groupByKey();
         
         // Define the initializer for the MergedRecord
-        Initializer<MergedRecord> initializer = () -> 
-            MergedRecord.builder()
-                .topic1Records(new ArrayList<>())
-                .topic2Records(new ArrayList<>())
-                .build();
+        Initializer<MergedRecord> initializer = () -> MergedRecord.builder().build();
         
         // Define the aggregator for topic1
-        Aggregator<String, String, MergedRecord> topic1Aggregator = (key, value, aggregate) -> {
-            try {
-                Topic1Record record = objectMapper.readValue(value, Topic1Record.class);
-                aggregate.setStudentId(record.getStudentId());
-                aggregate.getTopic1Records().add(record);
-                return aggregate;
-            } catch (JsonProcessingException e) {
-                log.error("Error deserializing topic1 record: {}", e.getMessage());
-                return aggregate;
-            }
+        Aggregator<String, Topic1Record, MergedRecord> topic1Aggregator = (key, value, aggregate) -> {
+            // Set fields from Topic1Record
+            aggregate.setName(value.getName());
+            aggregate.setAge(value.getAge());
+            aggregate.setNationality(value.getNationality());
+            aggregate.setStudentId(value.getStudentId());
+            return aggregate;
         };
         
         // Define the aggregator for topic2
-        Aggregator<String, String, MergedRecord> topic2Aggregator = (key, value, aggregate) -> {
-            try {
-                Topic2Record record = objectMapper.readValue(value, Topic2Record.class);
-                aggregate.setStudentId(record.getStudentId());
-                aggregate.getTopic2Records().add(record);
-                return aggregate;
-            } catch (JsonProcessingException e) {
-                log.error("Error deserializing topic2 record: {}", e.getMessage());
-                return aggregate;
-            }
+        Aggregator<String, Topic2Record, MergedRecord> topic2Aggregator = (key, value, aggregate) -> {
+            // Set fields from Topic2Record
+            aggregate.setDegree(value.getDegree());
+            aggregate.setAuthorized(value.isAuthorized());
+            aggregate.setCollegeName(value.getCollegeName());
+            return aggregate;
         };
         
         // Create a CogroupedKStream using the cogroup API
@@ -113,7 +101,7 @@ public class KafkaStreamsService {
                 .toStream()
                 .map((key, value) -> {
                     try {
-                        return KeyValue.pair(String.valueOf(value.getStudentId()), objectMapper.writeValueAsString(value));
+                        return KeyValue.pair(key, objectMapper.writeValueAsString(value));
                     } catch (JsonProcessingException e) {
                         log.error("Error serializing merged record: {}", e.getMessage());
                         return KeyValue.pair(key, "Error processing record");

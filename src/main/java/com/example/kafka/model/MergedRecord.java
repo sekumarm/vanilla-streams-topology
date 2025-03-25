@@ -5,14 +5,19 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.List;
-
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class MergedRecord {
+    // Fields from Topic1Record
+    private String name;
+    private int age;
+    private String nationality;
     private int studentId;
-    private List<Topic1Record> topic1Records;
-    private List<Topic2Record> topic2Records;
+    
+    // Fields from Topic2Record
+    private String degree;
+    private boolean authorized;
+    private String collegeName;
 }

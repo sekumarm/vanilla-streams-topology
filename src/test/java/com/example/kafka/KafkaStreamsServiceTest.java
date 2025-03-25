@@ -68,9 +68,9 @@ public class KafkaStreamsServiceTest {
         Topic1Record topic1Record = new Topic1Record("John Doe", 20, "US", 12345);
         Topic2Record topic2Record = new Topic2Record("Computer Science", true, 12345, "MIT");
         
-        // Send records to test topics
+        // Send records to test topics - Topic1 key is studentId, Topic2 key is studentName
         topic1.pipeInput(String.valueOf(topic1Record.getStudentId()), objectMapper.writeValueAsString(topic1Record));
-        topic2.pipeInput(String.valueOf(topic2Record.getStudentId()), objectMapper.writeValueAsString(topic2Record));
+        topic2.pipeInput(topic1Record.getName(), objectMapper.writeValueAsString(topic2Record));
         
         // Verify output
         assertNotNull(testDriver);
