@@ -1,5 +1,7 @@
 package com.example.kafka.service;
 
+import com.example.kafka.aggregator.Topic1Aggregator;
+import com.example.kafka.aggregator.Topic2Aggregator;
 import com.example.kafka.model.MergedRecord;
 import com.example.kafka.model.Topic1Record;
 import com.example.kafka.model.Topic2Record;
@@ -20,6 +22,8 @@ import org.springframework.stereotype.Service;
 public class KafkaStreamsService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Topic1Aggregator topic1Aggregator;
+    private final Topic2Aggregator topic2Aggregator;
 
     @Autowired
     public void buildPipeline(StreamsBuilder streamsBuilder) {
@@ -62,26 +66,7 @@ public class KafkaStreamsService {
         // Define the initializer for the MergedRecord
         Initializer<MergedRecord> initializer = () -> MergedRecord.builder().build();
         
-        // Define the aggregator for topic1
-        Aggregator<String, Topic1Record, MergedRecord> topic1Aggregator = (key, value, aggregate) -> {
-            // Set fields from Topic1Record
-            aggregate.setName(value.getName());
-            aggregate.setAge(value.getAge());
-            aggregate.setNationality(value.getNationality());
-            aggregate.setStudentId(value.getStudentId());
-            return aggregate;
-        };
-        
-        // Define the aggregator for topic2
-        Aggregator<String, Topic2Record, MergedRecord> topic2Aggregator = (key, value, aggregate) -> {
-            // Set fields from Topic2Record
-            aggregate.setDegree(value.getDegree());
-            aggregate.setAuthorized(value.isAuthorized());
-            aggregate.setCollegeName(value.getCollegeName());
-            return aggregate;
-        };
-        
-        // Create a CogroupedKStream using the cogroup API
+        // Create a CogroupedKStream using the cogroup API with external aggregators
         CogroupedKStream<String, MergedRecord> cogroupedStream = topic1GroupedStream
                 .cogroup(topic1Aggregator)
                 .cogroup(topic2GroupedStream, topic2Aggregator);
