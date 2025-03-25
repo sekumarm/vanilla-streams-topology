@@ -76,35 +76,15 @@ public class KafkaStreamsService {
                 .cogroup(topic1Aggregator)
                 .cogroup(topic2GroupedStream, topic2Aggregator);
         
-        // Create a materialized view for the aggregation
-        Materialized<String, MergedRecord, ?> materialized = Materialized
-                .<String, MergedRecord>as(Stores.inMemoryKeyValueStore("cogrouped-store"))
-                .withKeySerde(Serdes.String())
-                .withValueSerde(Serdes.serdeFrom(
-                        (topic, data) -> {
-                            try {
-                                return objectMapper.writeValueAsBytes(data);
-                            } catch (JsonProcessingException e) {
-                                log.error("Error serializing MergedRecord: {}", e.getMessage());
-                                return new byte[0];
-                            }
-                        },
-                        (topic, data) -> {
-                            try {
-                                return objectMapper.readValue(data, MergedRecord.class);
-                            } catch (JsonProcessingException e) {
-                                log.error("Error deserializing MergedRecord: {}", e.getMessage());
-                                return MergedRecord.builder().build();
-                            }
-                        }
-                ));
+        // Create a named store for the aggregation
+        Named named = Named.as("cogrouped-aggregation");
         
         // Aggregate the cogrouped streams with a time window
         KTable<Windowed<String>, MergedRecord> mergedTable = cogroupedStream
                 .windowedBy(TimeWindows.of(Duration.ofMinutes(5)))
                 .aggregate(
                         initializer,
-                        materialized
+                        named
                 );
         
         // Convert the KTable to a KStream
