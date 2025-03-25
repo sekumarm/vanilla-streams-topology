@@ -65,12 +65,12 @@ public class KafkaStreamsServiceTest {
     @Test
     void testCogroupTopology() throws JsonProcessingException {
         // Create test records
-        Topic1Record topic1Record = new Topic1Record("key1", "value1", System.currentTimeMillis());
-        Topic2Record topic2Record = new Topic2Record("key1", "value2", System.currentTimeMillis());
+        Topic1Record topic1Record = new Topic1Record("John Doe", 20, "US", 12345);
+        Topic2Record topic2Record = new Topic2Record("Computer Science", true, 12345, "MIT");
         
         // Send records to test topics
-        topic1.pipeInput("key1", objectMapper.writeValueAsString(topic1Record));
-        topic2.pipeInput("key1", objectMapper.writeValueAsString(topic2Record));
+        topic1.pipeInput(String.valueOf(topic1Record.getStudentId()), objectMapper.writeValueAsString(topic1Record));
+        topic2.pipeInput(String.valueOf(topic2Record.getStudentId()), objectMapper.writeValueAsString(topic2Record));
         
         // Verify output
         assertNotNull(testDriver);

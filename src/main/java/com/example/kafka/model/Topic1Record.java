@@ -8,7 +8,8 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Topic1Record {
-    private String id;
-    private String value;
-    private long timestamp;
+    private String name;
+    private int age;
+    private String nationality;
+    private int studentId;
 }

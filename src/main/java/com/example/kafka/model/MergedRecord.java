@@ -12,7 +12,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class MergedRecord {
-    private String id;
+    private int studentId;
     private List<Topic1Record> topic1Records;
     private List<Topic2Record> topic2Records;
 }

@@ -11,13 +11,11 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
-import org.apache.kafka.streams.state.Stores;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.List;
 
 @Service
 @Slf4j
@@ -34,11 +32,33 @@ public class KafkaStreamsService {
         // Create KStream for topic2
         KStream<String, String> topic2Stream = streamsBuilder.stream("kafka-topic-2");
         
-        // Group topic1 stream by key
-        KGroupedStream<String, String> topic1GroupedStream = topic1Stream.groupByKey();
+        // Extract studentId as key for topic1
+        KStream<String, String> topic1KeyedStream = topic1Stream.map((key, value) -> {
+            try {
+                Topic1Record record = objectMapper.readValue(value, Topic1Record.class);
+                return KeyValue.pair(String.valueOf(record.getStudentId()), value);
+            } catch (JsonProcessingException e) {
+                log.error("Error deserializing topic1 record: {}", e.getMessage());
+                return KeyValue.pair("error", value);
+            }
+        });
         
-        // Group topic2 stream by key
-        KGroupedStream<String, String> topic2GroupedStream = topic2Stream.groupByKey();
+        // Extract studentId as key for topic2
+        KStream<String, String> topic2KeyedStream = topic2Stream.map((key, value) -> {
+            try {
+                Topic2Record record = objectMapper.readValue(value, Topic2Record.class);
+                return KeyValue.pair(String.valueOf(record.getStudentId()), value);
+            } catch (JsonProcessingException e) {
+                log.error("Error deserializing topic2 record: {}", e.getMessage());
+                return KeyValue.pair("error", value);
+            }
+        });
+        
+        // Group topic1 stream by studentId key
+        KGroupedStream<String, String> topic1GroupedStream = topic1KeyedStream.groupByKey();
+        
+        // Group topic2 stream by studentId key
+        KGroupedStream<String, String> topic2GroupedStream = topic2KeyedStream.groupByKey();
         
         // Define the initializer for the MergedRecord
         Initializer<MergedRecord> initializer = () -> 
@@ -51,6 +71,7 @@ public class KafkaStreamsService {
         Aggregator<String, String, MergedRecord> topic1Aggregator = (key, value, aggregate) -> {
             try {
                 Topic1Record record = objectMapper.readValue(value, Topic1Record.class);
+                aggregate.setStudentId(record.getStudentId());
                 aggregate.getTopic1Records().add(record);
                 return aggregate;
             } catch (JsonProcessingException e) {
@@ -63,6 +84,7 @@ public class KafkaStreamsService {
         Aggregator<String, String, MergedRecord> topic2Aggregator = (key, value, aggregate) -> {
             try {
                 Topic2Record record = objectMapper.readValue(value, Topic2Record.class);
+                aggregate.setStudentId(record.getStudentId());
                 aggregate.getTopic2Records().add(record);
                 return aggregate;
             } catch (JsonProcessingException e) {
@@ -79,9 +101,8 @@ public class KafkaStreamsService {
         // Create a named store for the aggregation
         Named named = Named.as("cogrouped-aggregation");
         
-        // Aggregate the cogrouped streams with a time window
-        KTable<Windowed<String>, MergedRecord> mergedTable = cogroupedStream
-                .windowedBy(TimeWindows.of(Duration.ofMinutes(5)))
+        // Aggregate the cogrouped streams without windowing
+        KTable<String, MergedRecord> mergedTable = cogroupedStream
                 .aggregate(
                         initializer,
                         named
@@ -90,13 +111,12 @@ public class KafkaStreamsService {
         // Convert the KTable to a KStream
         KStream<String, String> outputStream = mergedTable
                 .toStream()
-                .map((windowedKey, value) -> {
-                    value.setId(windowedKey.key());
+                .map((key, value) -> {
                     try {
-                        return KeyValue.pair(windowedKey.key(), objectMapper.writeValueAsString(value));
+                        return KeyValue.pair(String.valueOf(value.getStudentId()), objectMapper.writeValueAsString(value));
                     } catch (JsonProcessingException e) {
                         log.error("Error serializing merged record: {}", e.getMessage());
-                        return KeyValue.pair(windowedKey.key(), "Error processing record");
+                        return KeyValue.pair(key, "Error processing record");
                     }
                 });
         
