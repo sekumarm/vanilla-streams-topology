@@ -8,8 +8,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.serialization.Serdes;
+import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
+import org.apache.kafka.streams.state.Stores;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -38,46 +40,71 @@ public class KafkaStreamsService {
         // Group topic2 stream by key
         KGroupedStream<String, String> topic2GroupedStream = topic2Stream.groupByKey();
         
-        // Create a CogroupedKStream using the cogroup API
-        CogroupedKStream<String, String> cogroupedStream = topic1GroupedStream.cogroup(
-                (key, value, aggregate) -> {
-                    try {
-                        Topic1Record record = objectMapper.readValue(value, Topic1Record.class);
-                        if (aggregate.topic1Records == null) {
-                            aggregate.topic1Records = new ArrayList<>();
-                        }
-                        aggregate.topic1Records.add(record);
-                        return aggregate;
-                    } catch (JsonProcessingException e) {
-                        log.error("Error deserializing topic1 record: {}", e.getMessage());
-                        return aggregate;
-                    }
-                }
-        );
+        // Define the initializer for the MergedRecord
+        Initializer<MergedRecord> initializer = () -> 
+            MergedRecord.builder()
+                .topic1Records(new ArrayList<>())
+                .topic2Records(new ArrayList<>())
+                .build();
         
-        // Add topic2 to the cogroup
-        cogroupedStream = cogroupedStream.cogroup(topic2GroupedStream, 
-                (key, value, aggregate) -> {
-                    try {
-                        Topic2Record record = objectMapper.readValue(value, Topic2Record.class);
-                        if (aggregate.topic2Records == null) {
-                            aggregate.topic2Records = new ArrayList<>();
+        // Define the aggregator for topic1
+        Aggregator<String, String, MergedRecord> topic1Aggregator = (key, value, aggregate) -> {
+            try {
+                Topic1Record record = objectMapper.readValue(value, Topic1Record.class);
+                aggregate.getTopic1Records().add(record);
+                return aggregate;
+            } catch (JsonProcessingException e) {
+                log.error("Error deserializing topic1 record: {}", e.getMessage());
+                return aggregate;
+            }
+        };
+        
+        // Define the aggregator for topic2
+        Aggregator<String, String, MergedRecord> topic2Aggregator = (key, value, aggregate) -> {
+            try {
+                Topic2Record record = objectMapper.readValue(value, Topic2Record.class);
+                aggregate.getTopic2Records().add(record);
+                return aggregate;
+            } catch (JsonProcessingException e) {
+                log.error("Error deserializing topic2 record: {}", e.getMessage());
+                return aggregate;
+            }
+        };
+        
+        // Create a CogroupedKStream using the cogroup API
+        CogroupedKStream<String, MergedRecord> cogroupedStream = topic1GroupedStream
+                .cogroup(topic1Aggregator)
+                .cogroup(topic2GroupedStream, topic2Aggregator);
+        
+        // Create a materialized view for the aggregation
+        Materialized<String, MergedRecord, ?> materialized = Materialized
+                .<String, MergedRecord>as(Stores.inMemoryKeyValueStore("cogrouped-store"))
+                .withKeySerde(Serdes.String())
+                .withValueSerde(Serdes.serdeFrom(
+                        (topic, data) -> {
+                            try {
+                                return objectMapper.writeValueAsBytes(data);
+                            } catch (JsonProcessingException e) {
+                                log.error("Error serializing MergedRecord: {}", e.getMessage());
+                                return new byte[0];
+                            }
+                        },
+                        (topic, data) -> {
+                            try {
+                                return objectMapper.readValue(data, MergedRecord.class);
+                            } catch (JsonProcessingException e) {
+                                log.error("Error deserializing MergedRecord: {}", e.getMessage());
+                                return MergedRecord.builder().build();
+                            }
                         }
-                        aggregate.topic2Records.add(record);
-                        return aggregate;
-                    } catch (JsonProcessingException e) {
-                        log.error("Error deserializing topic2 record: {}", e.getMessage());
-                        return aggregate;
-                    }
-                }
-        );
+                ));
         
         // Aggregate the cogrouped streams with a time window
         KTable<Windowed<String>, MergedRecord> mergedTable = cogroupedStream
                 .windowedBy(TimeWindows.of(Duration.ofMinutes(5)))
                 .aggregate(
-                        () -> MergedRecord.builder().topic1Records(new ArrayList<>()).topic2Records(new ArrayList<>()).build(),
-                        Named.as("cogrouped-aggregation")
+                        initializer,
+                        materialized
                 );
         
         // Convert the KTable to a KStream
