@@ -63,24 +63,27 @@ public class KafkaStreamsService {
         // Group repartitioned topic2 stream by studentId key
         KGroupedStream<String, Topic2Record> topic2GroupedStream = topic2RepartitionedStream.groupByKey();
         
-        // Define the initializer for the MergedRecord
-        Initializer<MergedRecord> initializer = () -> MergedRecord.builder().build();
-        
-        // Create a CogroupedKStream using the cogroup API with external aggregators
-        CogroupedKStream<String, MergedRecord> cogroupedStream = topic1GroupedStream
+        // Combined cogroup and mergedTable creation block
+        KTable<String, MergedRecord> mergedTable = topic1GroupedStream
                 .cogroup(topic1Aggregator)
-                .cogroup(topic2GroupedStream, topic2Aggregator);
-        
-        // Create a named store for the aggregation
-        Named named = Named.as("cogrouped-aggregation");
-        
-        // Aggregate the cogrouped streams without windowing
-        KTable<String, MergedRecord> mergedTable = cogroupedStream
+                .cogroup(topic2GroupedStream, topic2Aggregator)
                 .aggregate(
-                        initializer,
-                        named
+                        () -> MergedRecord.builder().build(),
+                        Named.as("cogrouped-aggregation")
                 );
         
+        // Create and send output stream
+        createAndSendOutputStream(mergedTable);
+        
+        log.info("Kafka Streams topology built successfully");
+    }
+    
+    /**
+     * Creates an output stream from the merged table and sends it to the output topic
+     * 
+     * @param mergedTable The KTable containing merged records
+     */
+    private void createAndSendOutputStream(KTable<String, MergedRecord> mergedTable) {
         // Convert the KTable to a KStream
         KStream<String, String> outputStream = mergedTable
                 .toStream()
@@ -96,6 +99,6 @@ public class KafkaStreamsService {
         // Send the result to the output topic
         outputStream.to("output-topic");
         
-        log.info("Kafka Streams topology built successfully");
+        log.info("Output stream created and sent to output-topic");
     }
 }
